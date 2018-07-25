@@ -1,4 +1,4 @@
-os: Visual Studio 2013
+os: Visual Studio 2015
 
 clone_folder: C:\projects\Stockfish
 shallow_clone: true
