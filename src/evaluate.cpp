@@ -1186,7 +1186,19 @@ namespace {
 #endif
 #ifdef RACE
     if (pos.is_race())
+    {
         kingDanger = -kingDanger;
+        int s = relative_rank(BLACK, ksq);
+        Bitboard b = file_bb(ksq);
+        for (Rank kr = rank_of(ksq), r = Rank(kr + 1); r <= RANK_8; ++r)
+        {
+            // Pinned piece attacks are not included in attackedBy
+            b |= shift<EAST>(b) | shift<WEST>(b);
+            if (!(rank_bb(r) & b & ~attackedBy[Them][ALL_PIECES]))
+                s++;
+        }
+        score += KingRaceBonus[std::min(s, 7)];
+    }
 #endif
 
     // Find the squares that opponent attacks in our king flank, the squares
@@ -1634,7 +1646,7 @@ namespace {
 
 #ifdef ATOMIC
     if (pos.is_atomic())
-        score -= AtomicConfinedKing * popcount(attackedBy[Us][KING] & pos.pieces());
+        score -= AtomicConfinedKing * popcount(attacks_bb<KING>(pos.square<KING>(Us)) & pos.pieces());
 #endif
 #ifdef HORDE
     if (pos.is_horde() && pos.is_horde_color(Them))
@@ -1643,9 +1655,13 @@ namespace {
         if (pos.pieces(Us, ROOK) | pos.pieces(Us, QUEEN))
         {
             int dist = 8;
-            if ((attackedBy[Us][QUEEN] | attackedBy[Us][ROOK]) & rank_bb(relative_rank(Us, RANK_8)))
-                dist = 0;
-            else for (File f = FILE_A; f <= FILE_H; ++f)
+            Bitboard target = (Us == WHITE ? Rank8BB : Rank1BB);
+            while (target)
+            {
+                if (pos.attackers_to(pop_lsb(&target)) & pos.pieces(Us, ROOK, QUEEN))
+                    dist = 0;
+            }
+            for (File f = FILE_A; f <= FILE_H; ++f)
             {
                 int pawns = popcount(pos.pieces(Them, PAWN) & file_bb(f));
                 int pawnsl = std::min(popcount(pos.pieces(Them, PAWN) & shift<WEST>(file_bb(f))), pawns);
@@ -1659,36 +1675,18 @@ namespace {
 #ifdef KOTH
     if (pos.is_koth())
     {
-        // Pinned piece (not pawn) attacks are not included in attackedBy
         constexpr Direction Up = pawn_push(Us);
-        Bitboard pinned = pos.blockers_for_king(Them) & pos.pieces(Them);
         Bitboard center = Center;
         while (center)
         {
-            // Skip costly attackers_to if the center is not attacked by them
             Square s = pop_lsb(&center);
             int dist = distance(pos.square<KING>(Us), s)
-                      + ((pinned || (attackedBy[Them][ALL_PIECES] & s)) ? popcount(pos.attackers_to(s) & pos.pieces(Them)) : 0)
+                      + popcount(pos.attackers_to(s) & pos.pieces(Them))
                       + !!(pos.pieces(Us) & s)
                       + !!(shift<Up>(pos.pieces(Us, PAWN) & s) & pos.pieces(Them, PAWN));
             assert(dist > 0);
             score += KothDistanceBonus[std::min(dist - 1, 5)];
         }
-    }
-#endif
-#ifdef RACE
-    if (pos.is_race())
-    {
-        Square ksq = pos.square<KING>(Us);
-        int s = relative_rank(BLACK, ksq);
-        Bitboard b = file_bb(ksq);
-        for (Rank kr = rank_of(ksq), r = Rank(kr + 1); r <= RANK_8; ++r)
-        {
-            b |= shift<EAST>(b) | shift<WEST>(b);
-            if (!(rank_bb(r) & b & ~attackedBy[Them][ALL_PIECES]))
-                s++;
-        }
-        score += KingRaceBonus[std::min(s, 7)];
     }
 #endif
 #ifdef THREECHECK
@@ -1865,7 +1863,6 @@ namespace {
         return abs(mg_value(score) + eg_value(score)) / 2 > lazyThreshold + pos.non_pawn_material() / 64;
     };
 
-    if (pos.variant() == CHESS_VARIANT)
     if (lazy_skip(LazyThreshold1))
         goto make_v;
 
@@ -1886,17 +1883,16 @@ namespace {
     score +=  king<   WHITE>() - king<   BLACK>()
             + passed< WHITE>() - passed< BLACK>();
 
-    if (pos.variant() == CHESS_VARIANT)
     if (lazy_skip(LazyThreshold2))
         goto make_v;
 
     score +=  threats<WHITE>() - threats<BLACK>()
             + space<  WHITE>() - space<  BLACK>();
 
-    if (pos.variant() != CHESS_VARIANT)
-        score += variant<WHITE>() - variant<BLACK>();
 make_v:
     // Derive single value from mg and eg parts of score
+    if (pos.variant() != CHESS_VARIANT)
+        score += variant<WHITE>() - variant<BLACK>();
     Value v = winnable(score);
 
     // In case of tracing add all remaining individual evaluation terms
